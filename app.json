@@ -6,25 +6,35 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.swipeandclean.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "SwipeAndClean needs access to your photos so you can review and organize them.",
+        "NSPhotoLibraryAddUsageDescription": "SwipeAndClean needs permission to save photos back to your library when you recover them."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      }
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    }
+    "plugins": [
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "SwipeAndClean needs access to your photos so you can review and organize them.",
+          "savePhotosPermission": "SwipeAndClean needs permission to save photos back to your library when you recover them.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ]
+    ]
   }
 }
