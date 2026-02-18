@@ -32,10 +32,10 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   return result;
 }
 
-// Flat list item types for Collections view (avoids SectionList complexity)
-type CollItem =
-  | { type: 'header'; title: string; count: number }
-  | { type: 'row'; photos: MediaLibrary.Asset[] };
+// Flat list item types for Collections view
+type CollHeader = { type: 'header'; title: string; count: number };
+type CollRow    = { type: 'row';    photos: MediaLibrary.Asset[] };
+type CollItem   = CollHeader | CollRow;
 
 export default function GalleryScreen() {
   const [permission, requestPermission] = MediaLibrary.usePermissions();
@@ -408,9 +408,7 @@ export default function GalleryScreen() {
           key="collections"
           data={collectionsFlat}
           keyExtractor={(item, i) =>
-            item.type === 'header'
-              ? `h-${item.title}`
-              : `r-${(item as { type: 'row'; photos: MediaLibrary.Asset[] }).photos[0]?.id ?? i}`
+            item.type === 'header' ? `h-${item.title}` : `r-${item.photos[0]?.id ?? i}`
           }
           renderItem={({ item }) => {
             if (item.type === 'header') {
@@ -421,10 +419,10 @@ export default function GalleryScreen() {
                 </View>
               );
             }
-            const rowPhotos = (item as { type: 'row'; photos: MediaLibrary.Asset[] }).photos;
+            // item is CollRow here — TypeScript narrows correctly after the return above
             return (
-              <View style={styles.row}>
-                {rowPhotos.map((photo) => (
+              <View style={styles.photoRow}>
+                {item.photos.map((photo) => (
                   <TouchableOpacity
                     key={photo.id}
                     onPress={() => openViewer(photo)}
@@ -438,9 +436,9 @@ export default function GalleryScreen() {
                     />
                   </TouchableOpacity>
                 ))}
-                {/* Fill partial last row so grid stays aligned */}
-                {rowPhotos.length < NUM_COLUMNS &&
-                  Array.from({ length: NUM_COLUMNS - rowPhotos.length }).map((_, i) => (
+                {/* Spacers keep the last partial row left-aligned */}
+                {item.photos.length < NUM_COLUMNS &&
+                  Array.from({ length: NUM_COLUMNS - item.photos.length }).map((_, i) => (
                     <View key={`sp-${i}`} style={styles.photo} />
                   ))}
               </View>
@@ -520,6 +518,7 @@ const styles = StyleSheet.create({
 
   // Grid
   row: { gap: 1, marginBottom: 1 },
+  photoRow: { flexDirection: 'row', gap: 1, marginBottom: 1 },
   photo: { width: CELL_SIZE, height: CELL_SIZE, backgroundColor: '#E5E5EA' },
 
   // Collections month headers
