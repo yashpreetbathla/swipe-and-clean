@@ -61,6 +61,9 @@ export default function PhotoViewer({
   const translateY = useSharedValue(0);
   const rotate = useSharedValue(0);
   const bgOpacity = useSharedValue(1);
+  // Hides the card during the 1-frame gap between position reset and React
+  // re-rendering the next photo, preventing any flash of the old photo.
+  const cardOpacity = useSharedValue(1);
 
   const deletedIds = new Set(deletedAssets.map((a) => a.id));
   const safeIdx = Math.min(Math.max(currentIndex, 0), Math.max(photos.length - 1, 0));
@@ -75,6 +78,7 @@ export default function PhotoViewer({
     translateY.value = 0;
     rotate.value = 0;
     bgOpacity.value = 1;
+    cardOpacity.value = 1;
     isTransitioningRef.current = false;
   }, [visible, initialIndex]);
 
@@ -85,6 +89,7 @@ export default function PhotoViewer({
     translateY.value = 0;
     rotate.value = 0;
     bgOpacity.value = 1;
+    cardOpacity.value = 1;
     onClose();
   }, [onClose]);
 
@@ -92,11 +97,10 @@ export default function PhotoViewer({
     if (!currentPhoto) return;
     addDeleted(toStored(currentPhoto));
     setCurrentIndex((i) => Math.min(i + 1, photos.length - 1));
+    isTransitioningRef.current = false;
+    // Restore opacity after React has re-rendered the new photo at position 0
     requestAnimationFrame(() => {
-      translateX.value = 0;
-      rotate.value = 0;
-      translateY.value = 0;
-      isTransitioningRef.current = false;
+      cardOpacity.value = 1;
     });
   }, [currentPhoto, addDeleted, photos.length]);
 
@@ -104,27 +108,55 @@ export default function PhotoViewer({
     if (!currentPhoto) return;
     addKept(toStored(currentPhoto));
     setCurrentIndex((i) => Math.min(i + 1, photos.length - 1));
+    isTransitioningRef.current = false;
     requestAnimationFrame(() => {
-      translateX.value = 0;
-      rotate.value = 0;
-      translateY.value = 0;
-      isTransitioningRef.current = false;
+      cardOpacity.value = 1;
     });
   }, [currentPhoto, addKept, photos.length]);
+
+  // ─── Stable refs ──────────────────────────────────────────────────────────
+  // Worklets capture function references at creation time. By routing through
+  // refs we guarantee the worklet always calls the latest handleDelete/handleKeep
+  // even after the component re-renders (currentPhoto changes).
+  const handleDeleteRef = useRef(handleDelete);
+  const handleKeepRef = useRef(handleKeep);
+  handleDeleteRef.current = handleDelete;
+  handleKeepRef.current = handleKeep;
+
+  // These never change identity — safe to close over in worklets forever.
+  const stableDelete = useCallback(() => handleDeleteRef.current(), []);
+  const stableKeep = useCallback(() => handleKeepRef.current(), []);
+
+  // ─── Manual button handlers ────────────────────────────────────────────────
 
   const handleManualDelete = () => {
     if (isTransitioningRef.current || !currentPhoto) return;
     isTransitioningRef.current = true;
-    translateX.value = withSpring(-SW * 1.5, { damping: 15, stiffness: 100, velocity: 2000 }, () =>
-      runOnJS(handleDelete)()
+    translateX.value = withSpring(
+      -SW * 1.5,
+      { damping: 15, stiffness: 100, velocity: 2000 },
+      () => {
+        // UI thread: hide + reset before JS state update
+        cardOpacity.value = 0;
+        translateX.value = 0;
+        rotate.value = 0;
+        runOnJS(stableDelete)();
+      }
     );
   };
 
   const handleManualKeep = () => {
     if (isTransitioningRef.current || !currentPhoto) return;
     isTransitioningRef.current = true;
-    translateX.value = withSpring(SW * 1.5, { damping: 15, stiffness: 100, velocity: 2000 }, () =>
-      runOnJS(handleKeep)()
+    translateX.value = withSpring(
+      SW * 1.5,
+      { damping: 15, stiffness: 100, velocity: 2000 },
+      () => {
+        cardOpacity.value = 0;
+        translateX.value = 0;
+        rotate.value = 0;
+        runOnJS(stableKeep)();
+      }
     );
   };
 
@@ -142,11 +174,8 @@ export default function PhotoViewer({
     setCurrentIndex((i) => i + 1);
   };
 
-  // ─── Gestures (Gesture.Race = native direction detection, no JS jitter) ──
+  // ─── Gestures ─────────────────────────────────────────────────────────────
 
-  // Horizontal pan: Tinder swipe left = delete, right = keep
-  // activeOffsetX fires as soon as X movement starts; failOffsetY cancels if
-  // the user drifts vertically first — all decided on the native thread.
   const panH = Gesture.Pan()
     .activeOffsetX([-5, 5])
     .failOffsetY([-20, 20])
@@ -159,13 +188,24 @@ export default function PhotoViewer({
         translateX.value = withSpring(
           -SW * 1.5,
           { damping: 15, stiffness: 100, velocity: e.velocityX },
-          () => runOnJS(handleDelete)()
+          () => {
+            // UI thread: hide + reset instantly so next photo starts at center
+            cardOpacity.value = 0;
+            translateX.value = 0;
+            rotate.value = 0;
+            runOnJS(stableDelete)();
+          }
         );
       } else if (e.translationX > SWIPE_THRESHOLD || e.velocityX > 800) {
         translateX.value = withSpring(
           SW * 1.5,
           { damping: 15, stiffness: 100, velocity: e.velocityX },
-          () => runOnJS(handleKeep)()
+          () => {
+            cardOpacity.value = 0;
+            translateX.value = 0;
+            rotate.value = 0;
+            runOnJS(stableKeep)();
+          }
         );
       } else {
         translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
@@ -173,7 +213,6 @@ export default function PhotoViewer({
       }
     });
 
-  // Vertical pan: swipe down to dismiss
   const panV = Gesture.Pan()
     .activeOffsetY([10, SH])
     .failOffsetX([-10, 10])
@@ -202,12 +241,12 @@ export default function PhotoViewer({
       }
     });
 
-  // Race: whichever gesture activates first wins, the other is cancelled
   const gesture = Gesture.Race(panH, panV);
 
   // ─── Animated styles ──────────────────────────────────────────────────────
 
   const cardStyle = useAnimatedStyle(() => ({
+    opacity: cardOpacity.value,
     transform: [
       { translateX: translateX.value },
       { translateY: translateY.value },
@@ -217,8 +256,6 @@ export default function PhotoViewer({
 
   const bgStyle = useAnimatedStyle(() => ({ opacity: bgOpacity.value }));
 
-  // KEEP / NOPE overlays: driven purely by translateX, no direction check needed
-  // (translateX is only set by panH, so it's 0 unless swiping horizontally)
   const keepOverlayStyle = useAnimatedStyle(() => ({
     opacity: interpolate(translateX.value, [20, 100], [0, 1], Extrapolation.CLAMP),
   }));
@@ -227,7 +264,6 @@ export default function PhotoViewer({
     opacity: interpolate(-translateX.value, [20, 100], [0, 1], Extrapolation.CLAMP),
   }));
 
-  // Back card: scales up and brightens as the front card is dragged
   const backCardStyle = useAnimatedStyle(() => ({
     transform: [
       {
