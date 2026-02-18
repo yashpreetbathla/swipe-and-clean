@@ -13,7 +13,8 @@ import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { StoredAsset } from '../store/DeletedContext';
+import { StoredAsset, useDeleted } from '../store/DeletedContext';
+import PhotoViewer from '../components/PhotoViewer';
 
 interface Props {
   visible: boolean;
@@ -22,18 +23,8 @@ interface Props {
   onDeleteAssets: (assets: StoredAsset[]) => void;
 }
 
-const toStoredAsset = (a: MediaLibrary.Asset): StoredAsset => ({
-  id: a.id,
-  uri: a.uri,
-  filename: a.filename,
-  creationTime: a.creationTime,
-  width: a.width,
-  height: a.height,
-});
-
 function formatDate(creationTime: number): string {
-  const date = new Date(creationTime);
-  return date.toLocaleDateString(undefined, {
+  return new Date(creationTime).toLocaleDateString(undefined, {
     weekday: 'short',
     year: 'numeric',
     month: 'short',
@@ -41,116 +32,88 @@ function formatDate(creationTime: number): string {
   });
 }
 
-export default function SimilarGroupsScreen({
-  visible,
-  groups,
-  onClose,
-  onDeleteAssets,
-}: Props) {
+export default function SimilarGroupsScreen({ visible, groups, onClose }: Props) {
   const insets = useSafeAreaInsets();
-  const [localGroups, setLocalGroups] = useState<MediaLibrary.Asset[][]>(groups);
-  const [selectingGroupIndex, setSelectingGroupIndex] = useState<number | null>(null);
+  const { deletedAssets, keptIds } = useDeleted();
 
-  // Sync localGroups when the groups prop changes (e.g. when modal opens fresh)
-  React.useEffect(() => {
-    setLocalGroups(groups);
-    setSelectingGroupIndex(null);
-  }, [groups]);
+  // Viewer state for reviewing a single group
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerPhotos, setViewerPhotos] = useState<MediaLibrary.Asset[]>([]);
 
-  const totalPhotos = localGroups.reduce((sum, g) => sum + g.length, 0);
+  const deletedSet = new Set(deletedAssets.map((a) => a.id));
+  const keptSet = new Set(keptIds);
 
-  const handleDeleteAll = (groupIndex: number) => {
-    const group = localGroups[groupIndex];
-    onDeleteAssets(group.map(toStoredAsset));
-    setLocalGroups((prev) => prev.filter((_, i) => i !== groupIndex));
-    if (selectingGroupIndex === groupIndex) {
-      setSelectingGroupIndex(null);
-    }
+  // A group is resolved when every photo in it has been decided (deleted or kept)
+  const activeGroups = groups.filter(
+    (group) => !group.every((p) => deletedSet.has(p.id) || keptSet.has(p.id))
+  );
+
+  const openGroupViewer = (group: MediaLibrary.Asset[]) => {
+    setViewerPhotos(group);
+    setViewerVisible(true);
   };
 
-  const handleSelectBest = (groupIndex: number) => {
-    setSelectingGroupIndex(groupIndex);
-  };
-
-  const handleKeepOne = (groupIndex: number, keepAsset: MediaLibrary.Asset) => {
-    const group = localGroups[groupIndex];
-    const toDelete = group.filter((a) => a.id !== keepAsset.id);
-    onDeleteAssets(toDelete.map(toStoredAsset));
-    setLocalGroups((prev) => prev.filter((_, i) => i !== groupIndex));
-    setSelectingGroupIndex(null);
-  };
-
-  const renderGroup = ({ item, index }: ListRenderItemInfo<MediaLibrary.Asset[]>) => {
-    const isSelecting = selectingGroupIndex === index;
+  const renderGroup = ({ item }: ListRenderItemInfo<MediaLibrary.Asset[]>) => {
     const dateLabel = formatDate(item[0].creationTime);
+    // Count how many in this group are already decided
+    const decidedCount = item.filter((p) => deletedSet.has(p.id) || keptSet.has(p.id)).length;
+    const remaining = item.length - decidedCount;
 
     return (
-      <View style={styles.groupCard}>
-        <Text style={styles.groupDate}>{dateLabel}</Text>
+      <TouchableOpacity
+        style={styles.groupCard}
+        onPress={() => openGroupViewer(item)}
+        activeOpacity={0.8}
+      >
+        {/* Date + progress */}
+        <View style={styles.groupCardHeader}>
+          <Text style={styles.groupDate}>{dateLabel}</Text>
+          <View style={styles.groupBadge}>
+            <Text style={styles.groupBadgeText}>
+              {remaining > 0 ? `${remaining} to review` : 'Done ✓'}
+            </Text>
+          </View>
+        </View>
 
+        {/* Thumbnail strip */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.thumbnailRow}
+          scrollEnabled={false}
         >
           {item.map((asset) => {
-            if (isSelecting) {
-              return (
-                <TouchableOpacity
-                  key={asset.id}
-                  onPress={() => handleKeepOne(index, asset)}
-                  activeOpacity={0.75}
-                >
-                  <View style={styles.thumbnailWrapper}>
-                    <Image
-                      source={{ uri: asset.uri }}
-                      style={styles.thumbnail}
-                      contentFit="cover"
-                      recyclingKey={asset.id}
-                    />
-                    <View style={styles.thumbnailOverlay} />
-                    <View style={styles.keepBadge}>
-                      <Text style={styles.keepBadgeText}>Keep</Text>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              );
-            }
+            const isDeleted = deletedSet.has(asset.id);
+            const isKept = keptSet.has(asset.id);
             return (
-              <Image
-                key={asset.id}
-                source={{ uri: asset.uri }}
-                style={styles.thumbnail}
-                contentFit="cover"
-                recyclingKey={asset.id}
-              />
+              <View key={asset.id} style={styles.thumbnailWrapper}>
+                <Image
+                  source={{ uri: asset.uri }}
+                  style={[styles.thumbnail, (isDeleted || isKept) && styles.thumbnailDim]}
+                  contentFit="cover"
+                  recyclingKey={asset.id}
+                />
+                {isDeleted && (
+                  <View style={[styles.decisionBadge, styles.deletedBadge]}>
+                    <Ionicons name="close" size={12} color="#fff" />
+                  </View>
+                )}
+                {isKept && (
+                  <View style={[styles.decisionBadge, styles.keptBadge]}>
+                    <Ionicons name="checkmark" size={12} color="#fff" />
+                  </View>
+                )}
+              </View>
             );
           })}
         </ScrollView>
 
-        {isSelecting && (
-          <Text style={styles.selectInstruction}>
-            Tap the photo you want to keep
-          </Text>
-        )}
-
-        <View style={styles.groupActions}>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.actionButtonBlue]}
-            onPress={() => handleSelectBest(index)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.actionButtonTextBlue}>Select Best to Keep</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, styles.actionButtonRed]}
-            onPress={() => handleDeleteAll(index)}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.actionButtonTextRed}>Delete All in Group</Text>
-          </TouchableOpacity>
+        {/* Tap hint */}
+        <View style={styles.reviewHint}>
+          <Text style={styles.reviewHintText}>Tap to review group</Text>
+          <Ionicons name="chevron-forward" size={14} color="#007AFF" />
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -168,154 +131,106 @@ export default function SimilarGroupsScreen({
             <Ionicons name="chevron-back" size={22} color="#007AFF" />
             <Text style={styles.backText}>Similar Photos</Text>
           </TouchableOpacity>
-          {localGroups.length > 0 && (
-            <Text style={styles.subtitle}>
-              {localGroups.length} group{localGroups.length !== 1 ? 's' : ''} · {totalPhotos} photos
-            </Text>
-          )}
+          <Text style={styles.subtitle}>
+            {activeGroups.length > 0
+              ? `${activeGroups.length} group${activeGroups.length !== 1 ? 's' : ''} · swipe each group to keep or delete`
+              : 'All groups reviewed!'}
+          </Text>
         </View>
 
-        {localGroups.length === 0 ? (
+        {activeGroups.length === 0 ? (
           <View style={styles.emptyState}>
             <Ionicons name="checkmark-circle" size={64} color="#34C759" />
             <Text style={styles.emptyText}>All groups reviewed!</Text>
           </View>
         ) : (
           <FlatList
-            data={localGroups}
+            data={activeGroups}
             keyExtractor={(_, index) => String(index)}
             renderItem={renderGroup}
-            contentContainerStyle={[
-              styles.list,
-              { paddingBottom: insets.bottom + 16 },
-            ]}
+            contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 16 }]}
           />
         )}
       </View>
+
+      {/* PhotoViewer opens on top of this modal for the selected group */}
+      <PhotoViewer
+        visible={viewerVisible}
+        photos={viewerPhotos}
+        initialIndex={0}
+        title="Review Group"
+        onClose={() => setViewerVisible(false)}
+      />
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
+  container: { flex: 1, backgroundColor: '#fff' },
   header: {
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E5E5EA',
   },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  backText: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: '#007AFF',
-  },
-  subtitle: {
-    fontSize: 13,
-    color: '#8E8E93',
-    marginTop: 4,
-  },
-  list: {
-    padding: 16,
-  },
+  backButton: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  backText: { fontSize: 17, fontWeight: '600', color: '#007AFF' },
+  subtitle: { fontSize: 13, color: '#8E8E93', marginTop: 4 },
+
+  list: { padding: 16 },
+
   groupCard: {
     backgroundColor: '#F2F2F7',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 14,
     marginBottom: 12,
   },
-  groupDate: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#8E8E93',
+  groupCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 10,
   },
-  thumbnailRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingBottom: 2,
+  groupDate: { fontSize: 13, fontWeight: '600', color: '#8E8E93' },
+  groupBadge: {
+    backgroundColor: '#EAF4FF',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
-  thumbnailWrapper: {
-    position: 'relative',
-  },
+  groupBadgeText: { fontSize: 11, fontWeight: '600', color: '#007AFF' },
+
+  thumbnailRow: { flexDirection: 'row', gap: 8, paddingBottom: 2 },
+  thumbnailWrapper: { position: 'relative' },
   thumbnail: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
+    width: 90,
+    height: 90,
+    borderRadius: 10,
     backgroundColor: '#E5E5EA',
   },
-  thumbnailOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 8,
-    backgroundColor: 'rgba(0,0,0,0.15)',
-  },
-  keepBadge: {
+  thumbnailDim: { opacity: 0.5 },
+  decisionBadge: {
     position: 'absolute',
-    bottom: 6,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  keepBadgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    overflow: 'hidden',
-  },
-  selectInstruction: {
-    fontSize: 13,
-    color: '#007AFF',
-    fontWeight: '500',
-    marginTop: 10,
-    textAlign: 'center',
-  },
-  groupActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  actionButton: {
-    flex: 1,
-    paddingVertical: 9,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  actionButtonBlue: {
-    backgroundColor: '#E8F0FE',
-  },
-  actionButtonRed: {
-    backgroundColor: '#FEE8E8',
-  },
-  actionButtonTextBlue: {
-    color: '#007AFF',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  actionButtonTextRed: {
-    color: '#FF3B30',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  emptyState: {
-    flex: 1,
+    top: 4,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 16,
   },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#34C759',
+  deletedBadge: { backgroundColor: '#FF3B30' },
+  keptBadge: { backgroundColor: '#34C759' },
+
+  reviewHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
+    marginTop: 10,
   },
+  reviewHintText: { fontSize: 13, color: '#007AFF', fontWeight: '500' },
+
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 16 },
+  emptyText: { fontSize: 18, fontWeight: '600', color: '#34C759' },
 });

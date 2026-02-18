@@ -9,7 +9,6 @@ import { StatusBar } from 'expo-status-bar';
 
 import { DeletedProvider, useDeleted } from './store/DeletedContext';
 import GalleryScreen from './screens/GalleryScreen';
-import ReviewScreen from './screens/ReviewScreen';
 import DeletedScreen from './screens/DeletedScreen';
 
 const Tab = createBottomTabNavigator();
@@ -45,15 +44,6 @@ function AppTabs() {
         options={{
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="images-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Review"
-        component={ReviewScreen}
-        options={{
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="swap-horizontal-outline" size={size} color={color} />
           ),
         }}
       />
