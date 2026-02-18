@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import * as MediaLibrary from 'expo-media-library';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useDeleted, StoredAsset } from '../store/DeletedContext';
+import { useDeleted } from '../store/DeletedContext';
 import { detectSimilarGroups, detectLowQuality } from '../utils/photoAnalysis';
 import PhotoViewer from '../components/PhotoViewer';
 import SimilarGroupsScreen from './SimilarGroupsScreen';
@@ -23,19 +23,6 @@ const NUM_COLUMNS = 3;
 const CELL_SIZE = (width - 2) / NUM_COLUMNS;
 const INITIAL_BATCH = 60;
 const BG_BATCH = 150;
-
-// ─── Collections helpers ────────────────────────────────────────────────────
-
-function chunkArray<T>(arr: T[], size: number): T[][] {
-  const result: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) result.push(arr.slice(i, i + size));
-  return result;
-}
-
-// Flat list item types for Collections view
-type CollHeader = { type: 'header'; title: string; count: number };
-type CollRow    = { type: 'row';    photos: MediaLibrary.Asset[] };
-type CollItem   = CollHeader | CollRow;
 
 export default function GalleryScreen() {
   const [permission, requestPermission] = MediaLibrary.usePermissions();
@@ -55,11 +42,9 @@ export default function GalleryScreen() {
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerTitle, setViewerTitle] = useState<string | undefined>(undefined);
 
-  // UI
-  const [segment, setSegment] = useState<'library' | 'collections'>('library');
   const [showSimilar, setShowSimilar] = useState(false);
 
-  const { deletedAssets, addDeleted } = useDeleted();
+  const { deletedAssets } = useDeleted();
   const deletedIds = useMemo(() => new Set(deletedAssets.map((a) => a.id)), [deletedAssets]);
   const insets = useSafeAreaInsets();
 
@@ -78,32 +63,6 @@ export default function GalleryScreen() {
   );
 
   const totalSimilarPhotos = similarGroups.reduce((sum, g) => sum + g.length, 0);
-
-  // Collections: photos grouped by month, flattened into header + row items
-  const collectionsFlat = useMemo<CollItem[]>(() => {
-    // Build ordered month map (photos already sorted newest-first)
-    const groups = new Map<string, { title: string; photos: MediaLibrary.Asset[] }>();
-    visiblePhotos.forEach((photo) => {
-      const date = new Date(photo.creationTime);
-      const key = `${date.getFullYear()}-${String(date.getMonth()).padStart(2, '0')}`;
-      if (!groups.has(key)) {
-        groups.set(key, {
-          title: date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' }),
-          photos: [],
-        });
-      }
-      groups.get(key)!.photos.push(photo);
-    });
-
-    const items: CollItem[] = [];
-    groups.forEach((group) => {
-      items.push({ type: 'header', title: group.title, count: group.photos.length });
-      chunkArray(group.photos, NUM_COLUMNS).forEach((row) => {
-        items.push({ type: 'row', photos: row });
-      });
-    });
-    return items;
-  }, [visiblePhotos]);
 
   // ETA for background analysis
   const analyzeEta = useMemo(() => {
@@ -257,30 +216,8 @@ export default function GalleryScreen() {
           : ''}
       </Text>
 
-      {/* Segmented control */}
-      <View style={styles.segControl}>
-        <TouchableOpacity
-          style={[styles.seg, segment === 'library' && styles.segActive]}
-          onPress={() => setSegment('library')}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.segText, segment === 'library' && styles.segTextActive]}>
-            Library
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.seg, segment === 'collections' && styles.segActive]}
-          onPress={() => setSegment('collections')}
-          activeOpacity={0.8}
-        >
-          <Text style={[styles.segText, segment === 'collections' && styles.segTextActive]}>
-            Collections
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Smart Review — only in Library */}
-      {segment === 'library' && (similarGroups.length > 0 || lowQualityPhotos.length > 0) && (
+      {/* Smart Review */}
+      {(similarGroups.length > 0 || lowQualityPhotos.length > 0) && (
         <View style={styles.smartSection}>
           <View style={styles.smartTitleRow}>
             <Text style={styles.smartTitle}>Smart Review</Text>
@@ -363,104 +300,42 @@ export default function GalleryScreen() {
 
   return (
     <View style={styles.container}>
-      {segment === 'library' ? (
-        /* ── Library: standard 3-column grid ── */
-        <FlatList
-          key="library"
-          data={visiblePhotos}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TouchableOpacity onPress={() => openViewer(item)} activeOpacity={0.85}>
-              <Image
-                source={{ uri: item.uri }}
-                style={styles.photo}
-                contentFit="cover"
-                recyclingKey={item.id}
-              />
-            </TouchableOpacity>
-          )}
-          numColumns={NUM_COLUMNS}
-          columnWrapperStyle={styles.row}
-          removeClippedSubviews
-          windowSize={5}
-          initialNumToRender={30}
-          maxToRenderPerBatch={20}
-          updateCellsBatchingPeriod={50}
-          getItemLayout={(_, index) => ({
-            length: CELL_SIZE,
-            offset: CELL_SIZE * Math.floor(index / NUM_COLUMNS),
-            index,
-          })}
-          ListHeaderComponent={ListHeader}
-          ListFooterComponent={
-            isAnalyzing ? <ActivityIndicator style={{ margin: 16 }} color="#8E8E93" /> : null
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Ionicons name="images-outline" size={56} color="#C7C7CC" />
-              <Text style={styles.emptyTitle}>No Photos</Text>
-            </View>
-          }
-        />
-      ) : (
-        /* ── Collections: months with section headers ── */
-        <FlatList
-          key="collections"
-          data={collectionsFlat}
-          keyExtractor={(item, i) =>
-            item.type === 'header' ? `h-${item.title}` : `r-${item.photos[0]?.id ?? i}`
-          }
-          renderItem={({ item }) => {
-            if (item.type === 'header') {
-              return (
-                <View style={styles.collHeader}>
-                  <Text style={styles.collMonth}>{item.title}</Text>
-                  <Text style={styles.collCount}>{item.count} photos</Text>
-                </View>
-              );
-            }
-            // item is CollRow here — TypeScript narrows correctly after the return above
-            return (
-              <View style={styles.photoRow}>
-                {item.photos.map((photo) => (
-                  <TouchableOpacity
-                    key={photo.id}
-                    onPress={() => openViewer(photo)}
-                    activeOpacity={0.85}
-                  >
-                    <Image
-                      source={{ uri: photo.uri }}
-                      style={styles.photo}
-                      contentFit="cover"
-                      recyclingKey={photo.id}
-                    />
-                  </TouchableOpacity>
-                ))}
-                {/* Spacers keep the last partial row left-aligned */}
-                {item.photos.length < NUM_COLUMNS &&
-                  Array.from({ length: NUM_COLUMNS - item.photos.length }).map((_, i) => (
-                    <View key={`sp-${i}`} style={styles.photo} />
-                  ))}
-              </View>
-            );
-          }}
-          ListHeaderComponent={ListHeader}
-          removeClippedSubviews
-          windowSize={7}
-          initialNumToRender={20}
-          maxToRenderPerBatch={20}
-          updateCellsBatchingPeriod={50}
-          ListFooterComponent={
-            isAnalyzing ? <ActivityIndicator style={{ margin: 16 }} color="#8E8E93" /> : null
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Ionicons name="images-outline" size={56} color="#C7C7CC" />
-              <Text style={styles.emptyTitle}>No Photos</Text>
-            </View>
-          }
-        />
-      )}
+      <FlatList
+        data={visiblePhotos}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <TouchableOpacity onPress={() => openViewer(item)} activeOpacity={0.85}>
+            <Image
+              source={{ uri: item.uri }}
+              style={styles.photo}
+              contentFit="cover"
+              recyclingKey={item.id}
+            />
+          </TouchableOpacity>
+        )}
+        numColumns={NUM_COLUMNS}
+        columnWrapperStyle={styles.row}
+        removeClippedSubviews
+        windowSize={5}
+        initialNumToRender={30}
+        maxToRenderPerBatch={20}
+        updateCellsBatchingPeriod={50}
+        getItemLayout={(_, index) => ({
+          length: CELL_SIZE,
+          offset: CELL_SIZE * Math.floor(index / NUM_COLUMNS),
+          index,
+        })}
+        ListHeaderComponent={ListHeader}
+        ListFooterComponent={
+          isAnalyzing ? <ActivityIndicator style={{ margin: 16 }} color="#8E8E93" /> : null
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Ionicons name="images-outline" size={56} color="#C7C7CC" />
+            <Text style={styles.emptyTitle}>No Photos</Text>
+          </View>
+        }
+      />
 
       {/* Grouped similar photos modal */}
       <SimilarGroupsScreen
@@ -497,39 +372,9 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 32, fontWeight: '700', color: '#000', marginBottom: 2 },
   headerSubtitle: { fontSize: 13, color: '#8E8E93', marginBottom: 14 },
 
-  // Segmented control
-  segControl: {
-    flexDirection: 'row',
-    backgroundColor: '#F2F2F7',
-    borderRadius: 10,
-    padding: 2,
-    marginBottom: 16,
-  },
-  seg: { flex: 1, paddingVertical: 7, alignItems: 'center', borderRadius: 8 },
-  segActive: {
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 1 },
-  },
-  segText: { fontSize: 14, fontWeight: '500', color: '#8E8E93' },
-  segTextActive: { color: '#000', fontWeight: '600' },
-
   // Grid
   row: { gap: 1, marginBottom: 1 },
-  photoRow: { flexDirection: 'row', gap: 1, marginBottom: 1 },
   photo: { width: CELL_SIZE, height: CELL_SIZE, backgroundColor: '#E5E5EA' },
-
-  // Collections month headers
-  collHeader: {
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 8,
-    backgroundColor: '#fff',
-  },
-  collMonth: { fontSize: 20, fontWeight: '700', color: '#000' },
-  collCount: { fontSize: 13, color: '#8E8E93', marginTop: 1 },
 
   // Smart Review
   smartSection: { marginBottom: 16, marginTop: 2 },
