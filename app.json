@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "SwipeAndClean",
-    "slug": "SwipeAndClean",
+    "name": "Swiperly",
+    "slug": "swiperly",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -13,25 +13,20 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.swipeandclean.app",
+      "supportsTablet": false,
+      "bundleIdentifier": "com.swiperly.app",
+      "buildNumber": "1",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "SwipeAndClean needs access to your photos so you can review and organize them.",
-        "NSPhotoLibraryAddUsageDescription": "SwipeAndClean needs permission to save photos back to your library when you recover them."
-      }
-    },
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "NSPhotoLibraryUsageDescription": "Swiperly needs access to your photos so you can review and organize them.",
+        "NSPhotoLibraryAddUsageDescription": "Swiperly needs permission to save photos back to your library when you recover them."
       }
     },
     "plugins": [
       [
         "expo-media-library",
         {
-          "photosPermission": "SwipeAndClean needs access to your photos so you can review and organize them.",
-          "savePhotosPermission": "SwipeAndClean needs permission to save photos back to your library when you recover them.",
+          "photosPermission": "Swiperly needs access to your photos so you can review and organize them.",
+          "savePhotosPermission": "Swiperly needs permission to save photos back to your library when you recover them.",
           "isAccessMediaLocationEnabled": true
         }
       ]
